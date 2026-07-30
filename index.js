@@ -1,38 +1,85 @@
-const express = require("express");
-const { generatePptx } = require("./pptx-builder");
+const pptxgen = require("pptxgenjs");
+const axios = require("axios");
 
-const app = express();
-app.use(express.json({ limit: "5mb" }));
+// 1. دالة جلب رابط الصورة من Pexels API
+async function fetchPexelsImageUrl(query) {
+  const apiKey = process.env.PEXELS_API_KEY;
+  if (!apiKey || !query) return null;
 
-app.get("/", (req, res) => {
-  res.json({ status: "ok", service: "lesson-pptx-service" });
-});
-
-app.post("/generate", async (req, res) => {
   try {
-    const { topic, grade, subject, slides } = req.body || {};
-    if (!Array.isArray(slides) || slides.length === 0) {
-      return res.status(400).json({ error: "Missing or empty 'slides' array" });
+    const response = await axios.get("https://api.pexels.com/v1/search", {
+      params: { query: query, per_page: 1 },
+      headers: { Authorization: apiKey },
+      timeout: 3000 // مهلة 3 ثوانٍ لعدم تعطيل السلايد إذا تأخرت الاستجابة
+    });
+
+    if (response.data && response.data.photos && response.data.photos.length > 0) {
+      return response.data.photos[0].src.medium; // إرجاع رابط الصورة بحجم مناسب
     }
-
-    const buffer = await generatePptx({ topic, grade, subject, slides });
-
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="lesson-presentation.pptx"`
-    );
-    res.send(buffer);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Generation failed", details: err.message });
+  } catch (error) {
+    console.error(`Pexels API Error for query "${query}":`, error.message);
   }
-});
+  return null;
+}
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`lesson-pptx-service listening on port ${PORT}`);
-});
+// 2. دالة بناء العرض التقديمي (PPTX)
+async function generatePptx({ topic, grade, subject, slides }) {
+  const pptx = new pptxgen();
+
+  // ضبط أبعاد العرض التقديمي (16:9 HD)
+  pptx.layout = "LAYOUT_16x9";
+
+  // تكرار على كل السلايدات المعالجة من n8n
+  for (let i = 0; i < slides.length; i++) {
+    const slideData = slides[i];
+    const slide = pptx.addSlide();
+
+    // إضافة عنوان السلايد
+    slide.addText(slideData.title || `Slide ${i + 1}`, {
+      x: 0.5,
+      y: 0.5,
+      w: 8.5,
+      h: 0.8,
+      fontSize: 24,
+      bold: true,
+      color: "003366",
+      align: "right",
+      rtl: true
+    });
+
+    // إضافة نص المحتوى (Bullets)
+    slide.addText(slideData.content || "", {
+      x: 4.5,
+      y: 1.5,
+      w: 4.5,
+      h: 5.0,
+      fontSize: 16,
+      color: "333333",
+      align: "right",
+      rtl: true,
+      valign: "top"
+    });
+
+    // جلب الصورة من Pexels بناءً على visual_suggestion أو Title
+    const searchQuery = slideData.visual_suggestion || slideData.title;
+    const imageUrl = await fetchPexelsImageUrl(searchQuery);
+
+    // إذا وُجدت صورة، يتم تضمينها في الشريحة بالجهة اليسرى
+    if (imageUrl) {
+      slide.addImage({
+        path: imageUrl,
+        x: 0.5,
+        y: 1.5,
+        w: 3.8,
+        h: 4.5,
+        sizing: { type: "contain" }
+      });
+    }
+  }
+
+  // تصدير الملف كـ Buffer لإرساله إلى n8n
+  const buffer = await pptx.write("nodebuffer");
+  return buffer;
+}
+
+module.exports = { generatePptx };
