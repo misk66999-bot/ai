@@ -1,6 +1,6 @@
 const pptxgen = require("pptxgenjs");
 
-// 1. دالة جلب رابط الصورة من Pexels باستخدام fetch المدمجة
+// 1. دالة جلب رابط الصورة من Pexels
 async function fetchPexelsImageUrl(query) {
   const apiKey = process.env.PEXELS_API_KEY;
   if (!apiKey || !query) return null;
@@ -10,7 +10,7 @@ async function fetchPexelsImageUrl(query) {
       `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=1`,
       {
         headers: { Authorization: apiKey },
-        signal: AbortSignal.timeout(3000) // مهلة 3 ثوانٍ
+        signal: AbortSignal.timeout(3000)
       }
     );
 
@@ -27,22 +27,62 @@ async function fetchPexelsImageUrl(query) {
 }
 
 // 2. دالة بناء العرض التقديمي (PPTX)
-async function generatePptx({ topic, grade, subject, slides }) {
+async function generatePptx(payload) {
   const pptx = new pptxgen();
-
-  // ضبط أبعاد العرض التقديمي (16:9 HD)
   pptx.layout = "LAYOUT_16x9";
 
-  if (Array.isArray(slides)) {
-    for (let i = 0; i < slides.length; i++) {
-      const slideData = slides[i];
+  // فك وحل مشكلة اختلاف هيكلية البيانات القادمة من n8n/Groq
+  let slidesData = payload.slides;
+  
+  if (typeof slidesData === 'string') {
+    try { slidesData = JSON.parse(slidesData); } catch (e) {}
+  }
+  
+  // إذا لم يجد slides، يحاول البحث داخل payload المباشر
+  if (!Array.isArray(slidesData) && Array.isArray(payload)) {
+    slidesData = payload;
+  }
+
+  // 1️⃣ شريحة عنوان رئيسية في حال كان هناك موضوع
+  if (payload.topic) {
+    const titleSlide = pptx.addSlide();
+    titleSlide.addText(payload.topic, {
+      x: 1.0,
+      y: 2.0,
+      w: 11.33,
+      h: 1.5,
+      fontSize: 36,
+      bold: true,
+      color: "003366",
+      align: "center",
+      rtl: true
+    });
+
+    if (payload.grade || payload.subject) {
+      titleSlide.addText(`${payload.subject || ''} - ${payload.grade || ''}`, {
+        x: 1.0,
+        y: 3.8,
+        w: 11.33,
+        h: 1.0,
+        fontSize: 20,
+        color: "555555",
+        align: "center",
+        rtl: true
+      });
+    }
+  }
+
+  // 2️⃣ تكرار وإنشاء شرائح الدروس
+  if (Array.isArray(slidesData) && slidesData.length > 0) {
+    for (let i = 0; i < slidesData.length; i++) {
+      const slideData = slidesData[i];
       const slide = pptx.addSlide();
 
-      // عنوان السلايد
-      slide.addText(slideData.title || `Slide ${i + 1}`, {
+      // عنوان الشريحة
+      slide.addText(slideData.title || `الشريحة ${i + 1}`, {
         x: 0.5,
         y: 0.5,
-        w: 8.5,
+        w: 12.33,
         h: 0.8,
         fontSize: 24,
         bold: true,
@@ -51,11 +91,11 @@ async function generatePptx({ topic, grade, subject, slides }) {
         rtl: true
       });
 
-      // نص المحتوى (Bullets)
+      // محتوى الشريحة
       slide.addText(slideData.content || "", {
-        x: 4.5,
+        x: 4.8,
         y: 1.5,
-        w: 4.5,
+        w: 7.0,
         h: 5.0,
         fontSize: 16,
         color: "333333",
@@ -64,7 +104,7 @@ async function generatePptx({ topic, grade, subject, slides }) {
         valign: "top"
       });
 
-      // جلب الصورة
+      // الصورة
       const searchQuery = slideData.visual_suggestion || slideData.title;
       const imageUrl = await fetchPexelsImageUrl(searchQuery);
 
@@ -73,7 +113,7 @@ async function generatePptx({ topic, grade, subject, slides }) {
           path: imageUrl,
           x: 0.5,
           y: 1.5,
-          w: 3.8,
+          w: 4.0,
           h: 4.5,
           sizing: { type: "contain" }
         });
