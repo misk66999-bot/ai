@@ -1,12 +1,38 @@
+const pptxgen = require("pptxgenjs");
+
+// 1. دالة جلب رابط الصورة من Pexels
+async function fetchPexelsImageUrl(query) {
+  const apiKey = process.env.PEXELS_API_KEY;
+  if (!apiKey || !query) return null;
+
+  try {
+    const response = await fetch(
+      `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=1`,
+      {
+        headers: { Authorization: apiKey },
+        signal: AbortSignal.timeout(3000)
+      }
+    );
+
+    if (!response.ok) return null;
+    const data = await response.json();
+
+    if (data && data.photos && data.photos.length > 0) {
+      return data.photos[0].src.medium;
+    }
+  } catch (error) {
+    console.error(`Pexels API Error for query "${query}":`, error.message);
+  }
+  return null;
+}
+
 // 2. دالة بناء العرض التقديمي (PPTX)
 async function generatePptx(payload) {
   const pptx = new pptxgen();
   pptx.layout = "LAYOUT_16x9";
 
-  // فك التداخل: محاولة استخراج slides سواء كانت مباشرة أو مغلفة
+  // استخراج البيانات وتجاوز التداخل
   let slidesData = payload.slides;
-  
-  // إذا كانت slides عبارة عن Object يحتوي بداخله على slides أخرى
   if (slidesData && !Array.isArray(slidesData) && Array.isArray(slidesData.slides)) {
     slidesData = slidesData.slides;
   }
@@ -15,7 +41,7 @@ async function generatePptx(payload) {
   const grade = payload.grade || (payload.slides && payload.slides.grade) || "";
   const subject = payload.subject || (payload.slides && payload.slides.subject) || "";
 
-  // 1️⃣ شريحة عنوان رئيسية
+  // شريحة العنوان
   const titleSlide = pptx.addSlide();
   titleSlide.addText(topic, {
     x: 1.0,
@@ -42,13 +68,12 @@ async function generatePptx(payload) {
     });
   }
 
-  // 2️⃣ تكرار وإنشاء شرائح الدروس
+  // شرائح المحتوى
   if (Array.isArray(slidesData) && slidesData.length > 0) {
     for (let i = 0; i < slidesData.length; i++) {
       const slideData = slidesData[i];
       const slide = pptx.addSlide();
 
-      // عنوان الشريحة
       slide.addText(slideData.title || `الشريحة ${i + 1}`, {
         x: 0.5,
         y: 0.5,
@@ -61,13 +86,11 @@ async function generatePptx(payload) {
         rtl: true
       });
 
-      // تحويل محتوى الشريحة لنص متنسق لو جاء كـ Array من Groq
       let contentText = slideData.content;
       if (Array.isArray(contentText)) {
         contentText = contentText.join("\n• ");
       }
 
-      // محتوى الشريحة
       slide.addText(contentText || "", {
         x: 4.8,
         y: 1.5,
@@ -80,7 +103,6 @@ async function generatePptx(payload) {
         valign: "top"
       });
 
-      // جلب الصورة
       const searchQuery = slideData.visual_suggestion || slideData.title;
       const imageUrl = await fetchPexelsImageUrl(searchQuery);
 
@@ -100,3 +122,6 @@ async function generatePptx(payload) {
   const buffer = await pptx.write("nodebuffer");
   return buffer;
 }
+
+// 🛑 السطر الأهم لمنع خطأ TypeError
+module.exports = { generatePptx };
